@@ -427,7 +427,7 @@ function loadSettings() {
   if (s.dayDoseTable)   DAY_DOSE_TABLE   = s.dayDoseTable.map(toInf);
   if (s.nightDoseTable) NIGHT_DOSE_TABLE = s.nightDoseTable.map(toInf);
   if (s.testTimes)      TEST_TIMES = s.testTimes;
-  if (s.injConfig)      Object.keys(s.injConfig).forEach(k => { if (INJ_CFG[k]) INJ_CFG[k] = { ...INJ_CFG[k], ...s.injConfig[k] }; });
+  if (s.injConfig)      Object.keys(s.injConfig).forEach(k => { if (INJ_CFG[k]) { const { basedOn, active } = s.injConfig[k]; INJ_CFG[k] = { ...INJ_CFG[k], basedOn, active }; } });
 }
 function persistSettings() {
   const toNull = r => ({ ...r, max: r.max === Infinity ? null : r.max });
