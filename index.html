@@ -365,9 +365,11 @@ async function flushQueue() {
   const failed = [];
   for (const op of q) {
     try {
-      if (op.type === 'reading')        await db.from('sugar_readings').upsert(op.data, { onConflict: 'id' });
-      else if (op.type === 'injection') await db.from('injections').upsert(op.data, { onConflict: 'id' });
-      else if (op.type === 'confirm')   await db.from('injections').update({ administered: true, administered_at: op.at }).eq('id', op.id);
+      let err;
+      if (op.type === 'reading')        ({ error: err } = await db.from('sugar_readings').upsert(op.data, { onConflict: 'id' }));
+      else if (op.type === 'injection') ({ error: err } = await db.from('injections').upsert(op.data, { onConflict: 'id' }));
+      else if (op.type === 'confirm')   ({ error: err } = await db.from('injections').update({ administered: true, administered_at: op.at }).eq('id', op.id));
+      if (err) failed.push(op);
     } catch { failed.push(op); }
   }
   lsSet('sync_q', failed); renderSyncStatus();
@@ -397,7 +399,10 @@ function initDB() {
 }
 async function remoteUpsert(table, data) {
   if (db && isOnline) {
-    try { await db.from(table).upsert(data, { onConflict: 'id' }); return; } catch {}
+    try {
+      const { error } = await db.from(table).upsert(data, { onConflict: 'id' });
+      if (!error) return; // success
+    } catch {}
   }
   queueOp({ type: table === 'sugar_readings' ? 'reading' : 'injection', data });
 }
@@ -411,6 +416,11 @@ async function loadToday() {
         db.from('sugar_readings').select('*').eq('date', todayDate),
         db.from('injections').select('*').eq('date', todayDate),
       ]);
+      // Push any local records not yet in Supabase
+      const remoteReadingIds = new Set((rs || []).map(r => r.id));
+      const remoteInjIds     = new Set((injs || []).map(i => i.id));
+      for (const r of Object.values(todayReadings))   { if (!remoteReadingIds.has(r.id)) await remoteUpsert('sugar_readings', r); }
+      for (const i of Object.values(todayInjections)) { if (!remoteInjIds.has(i.id))     await remoteUpsert('injections', i); }
       if (rs)   { rs.forEach(r => { todayReadings[r.time_code] = r; }); saveLocalReadings(todayDate, todayReadings); }
       if (injs) { injs.forEach(i => { todayInjections[i.injection_key] = i; }); saveLocalInjections(todayDate, todayInjections); }
     } catch {}
@@ -497,7 +507,12 @@ async function confirmInjection(key) {
   const at = new Date().toISOString();
   inj.administered = true; inj.administered_at = at;
   saveLocalInjections(todayDate, todayInjections);
-  if (db && isOnline) { try { await db.from('injections').update({ administered: true, administered_at: at }).eq('id', inj.id); return; } catch {} }
+  if (db && isOnline) {
+    try {
+      const { error } = await db.from('injections').update({ administered: true, administered_at: at }).eq('id', inj.id);
+      if (!error) return;
+    } catch {}
+  }
   queueOp({ type: 'confirm', id: inj.id, at });
 }
 
