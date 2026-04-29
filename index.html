@@ -393,8 +393,8 @@ async function flushQueue() {
   for (const op of q) {
     try {
       let err;
-      if (op.type === 'reading')        ({ error: err } = await db.from('sugar_readings').upsert(op.data, { onConflict: 'id' }));
-      else if (op.type === 'injection') ({ error: err } = await db.from('injections').upsert(op.data, { onConflict: 'id' }));
+      if (op.type === 'reading')        ({ error: err } = await db.from('sugar_readings').upsert(op.data, { onConflict: 'date,time_code' }));
+      else if (op.type === 'injection') ({ error: err } = await db.from('injections').upsert(op.data, { onConflict: 'date,injection_key' }));
       else if (op.type === 'confirm')   ({ error: err } = await db.from('injections').update({ administered: true, administered_at: op.at }).eq('id', op.id));
       if (err) failed.push(op);
     } catch { failed.push(op); }
@@ -427,7 +427,8 @@ function initDB() {
 async function remoteUpsert(table, data) {
   if (db && isOnline) {
     try {
-      const { error } = await db.from(table).upsert(data, { onConflict: 'id' });
+      const conflict = table === 'sugar_readings' ? 'date,time_code' : 'date,injection_key';
+      const { error } = await db.from(table).upsert(data, { onConflict: conflict });
       if (!error) { lastSyncError = null; return; }
       lastSyncError = error.message || JSON.stringify(error);
     } catch(e) { lastSyncError = e.message || String(e); }
