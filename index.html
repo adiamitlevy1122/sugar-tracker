@@ -186,6 +186,9 @@
     </div>
 
     <div id="tab-history" class="tab-content">
+      <div style="padding:12px 12px 0;">
+        <button class="btn btn-danger" style="width:100%;font-size:15px;" onclick="promptDeleteToday()">🗑️ מחק נתוני היום</button>
+      </div>
       <div id="history-wrap"></div>
     </div>
 
@@ -249,6 +252,29 @@
   </div>
 </div>
 
+<!-- Delete today modal -->
+<div id="delete-modal-overlay" class="modal-overlay">
+  <div class="modal-sheet">
+    <div class="modal-header">
+      <div class="modal-title">🗑️ מחק נתוני היום</div>
+      <button class="modal-close" onclick="closeDeleteModal()">✕</button>
+    </div>
+    <div id="delete-step-pin">
+      <label class="input-label">הזן קוד אבטחה למחיקה</label>
+      <input type="password" class="big-input" id="delete-pin-input" maxlength="4" inputmode="numeric" placeholder="••••"
+             autocomplete="off" onkeydown="if(event.key==='Enter')checkDeletePin()">
+      <div id="delete-pin-error" style="color:var(--red);font-size:13px;min-height:18px;margin-bottom:8px;text-align:center;"></div>
+      <button class="full-btn btn-danger" onclick="checkDeletePin()">אמת קוד</button>
+    </div>
+    <div id="delete-step-confirm" style="display:none;">
+      <div style="background:#FFF3F3;border-radius:10px;padding:14px;margin-bottom:16px;font-size:14px;line-height:1.6;color:var(--red);text-align:center;">
+        פעולה זו תמחק את כל הבדיקות וההזרקות של היום.<br>לא ניתן לשחזר לאחר המחיקה.
+      </div>
+      <button class="full-btn btn-danger" onclick="confirmDeleteToday()">מחק הכל ✓</button>
+      <button class="full-btn btn-ghost" style="margin-top:8px;" onclick="closeDeleteModal()">ביטול</button>
+    </div>
+  </div>
+</div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
@@ -294,6 +320,7 @@ const DEF_DOSE_TABLE = JSON.parse(JSON.stringify(
 let db = null, isOnline = navigator.onLine;
 let todayDate = localDate();
 let todayReadings = {}, todayInjections = {};
+let lastSyncError = null;
 
 // Modal state
 let readingCtx   = null; // { date, code, existingId|null, isEdit }
@@ -401,8 +428,9 @@ async function remoteUpsert(table, data) {
   if (db && isOnline) {
     try {
       const { error } = await db.from(table).upsert(data, { onConflict: 'id' });
-      if (!error) return; // success
-    } catch {}
+      if (!error) { lastSyncError = null; return; }
+      lastSyncError = error.message || JSON.stringify(error);
+    } catch(e) { lastSyncError = e.message || String(e); }
   }
   queueOp({ type: table === 'sugar_readings' ? 'reading' : 'injection', data });
 }
@@ -839,9 +867,16 @@ async function confirmReading() {
    ═══════════════════════════════════════ */
 function renderSyncStatus() {
   const el = document.getElementById('sync-indicator'), q = lsGet('sync_q') ?? [];
-  if (!isOnline)     { el.textContent = '⚫ לא מחובר'; el.style.color = 'var(--text2)'; }
-  else if (q.length) { el.textContent = '🔄 מסנכרן';   el.style.color = 'var(--orange)'; }
-  else               { el.textContent = '🟢 מסונכרן';  el.style.color = 'var(--green)'; }
+  el.style.cursor = 'pointer';
+  el.onclick = () => {
+    if (lastSyncError) alert('שגיאת סנכרון:\n' + lastSyncError);
+    else if (q.length) alert(`${q.length} פריטים ממתינים לסנכרון`);
+    else alert('מסונכרן – הכל תקין');
+  };
+  if (!isOnline)          { el.textContent = '⚫ לא מחובר';        el.style.color = 'var(--text2)'; }
+  else if (lastSyncError) { el.textContent = '🔴 שגיאת סנכרון';   el.style.color = 'var(--red)'; }
+  else if (q.length)      { el.textContent = '🔄 מסנכרן';          el.style.color = 'var(--orange)'; }
+  else                    { el.textContent = '🟢 מסונכרן';         el.style.color = 'var(--green)'; }
 }
 
 async function ensureInjections() {
@@ -907,6 +942,45 @@ async function init() {
   await loadToday(); await ensureInjections(); renderToday(); renderSyncStatus();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
   if (isOnline) flushQueue();
+}
+
+/* ═══════════════════════════════════════
+   DELETE TODAY
+   ═══════════════════════════════════════ */
+function promptDeleteToday() {
+  document.getElementById('delete-step-pin').style.display     = '';
+  document.getElementById('delete-step-confirm').style.display = 'none';
+  document.getElementById('delete-pin-input').value            = '';
+  document.getElementById('delete-pin-error').textContent      = '';
+  document.getElementById('delete-modal-overlay').classList.add('visible');
+  setTimeout(() => document.getElementById('delete-pin-input').focus(), 100);
+}
+function closeDeleteModal() {
+  document.getElementById('delete-modal-overlay').classList.remove('visible');
+}
+function checkDeletePin() {
+  const val = document.getElementById('delete-pin-input').value;
+  if (val !== SETTINGS_PIN) {
+    document.getElementById('delete-pin-error').textContent = 'קוד שגוי';
+    return;
+  }
+  document.getElementById('delete-step-pin').style.display     = 'none';
+  document.getElementById('delete-step-confirm').style.display = '';
+}
+async function confirmDeleteToday() {
+  closeDeleteModal();
+  // Clear from localStorage
+  localStorage.removeItem(`r_${todayDate}`);
+  localStorage.removeItem(`i_${todayDate}`);
+  todayReadings = {}; todayInjections = {};
+  // Remove from Supabase
+  if (db && isOnline) {
+    try {
+      await db.from('sugar_readings').delete().eq('date', todayDate);
+      await db.from('injections').delete().eq('date', todayDate);
+    } catch {}
+  }
+  renderToday();
 }
 
 init();
