@@ -412,6 +412,16 @@ async function flushQueue() {
       if (op.type === 'reading')        ({ error: err } = await db.from('sugar_readings').upsert(op.data, { onConflict: 'date,time_code' }));
       else if (op.type === 'injection') ({ error: err } = await db.from('injections').upsert(op.data, { onConflict: 'date,injection_key' }));
       else if (op.type === 'confirm')   ({ error: err } = await db.from('injections').update({ administered: true, administered_at: op.at }).eq('id', op.id));
+      else if (op.type === 'settings') {
+        const p = op.data, now = new Date().toISOString();
+        const rows = [
+          { key: 'day_dose_table',   value: p.dayDoseTable,   updated_at: now },
+          { key: 'night_dose_table', value: p.nightDoseTable, updated_at: now },
+          { key: 'test_times',       value: p.testTimes,      updated_at: now },
+          { key: 'inj_config',       value: p.injConfig,      updated_at: now },
+        ];
+        ({ error: err } = await db.from('app_settings').upsert(rows, { onConflict: 'key' }));
+      }
       if (err) failed.push(op);
     } catch { failed.push(op); }
   }
@@ -421,21 +431,63 @@ async function flushQueue() {
 /* ═══════════════════════════════════════
    SETTINGS PERSISTENCE
    ═══════════════════════════════════════ */
-function loadSettings() {
-  const s = lsGet('app_settings'); if (!s) return;
+function applySettingsObj(s) {
+  if (!s) return;
   const toInf = r => ({ ...r, max: r.max === null ? Infinity : r.max });
   if (s.dayDoseTable)   DAY_DOSE_TABLE   = s.dayDoseTable.map(toInf);
   if (s.nightDoseTable) NIGHT_DOSE_TABLE = s.nightDoseTable.map(toInf);
   if (s.testTimes)      TEST_TIMES = s.testTimes;
-  if (s.injConfig)      Object.keys(s.injConfig).forEach(k => { if (INJ_CFG[k]) { const { basedOn, active } = s.injConfig[k]; INJ_CFG[k] = { ...INJ_CFG[k], basedOn, active }; } });
+  if (s.injConfig)      Object.keys(s.injConfig).forEach(k => {
+    if (INJ_CFG[k]) { const { basedOn, active } = s.injConfig[k]; INJ_CFG[k] = { ...INJ_CFG[k], basedOn, active }; }
+  });
 }
-function persistSettings() {
+function settingsPayload() {
   const toNull = r => ({ ...r, max: r.max === Infinity ? null : r.max });
-  lsSet('app_settings', {
+  return {
     dayDoseTable:   DAY_DOSE_TABLE.map(toNull),
     nightDoseTable: NIGHT_DOSE_TABLE.map(toNull),
-    testTimes: TEST_TIMES, injConfig: INJ_CFG,
-  });
+    testTimes: TEST_TIMES,
+    injConfig: INJ_CFG,
+  };
+}
+async function loadSettings() {
+  // 1. Apply localStorage first (instant, no network needed)
+  applySettingsObj(lsGet('app_settings'));
+  // 2. Try to load fresher copy from Supabase
+  if (db && isOnline) {
+    try {
+      const { data, error } = await db.from('app_settings').select('key,value');
+      if (!error && data?.length) {
+        const byKey = Object.fromEntries(data.map(r => [r.key, r.value]));
+        const remote = {
+          dayDoseTable:   byKey.day_dose_table,
+          nightDoseTable: byKey.night_dose_table,
+          testTimes:      byKey.test_times,
+          injConfig:      byKey.inj_config,
+        };
+        applySettingsObj(remote);
+        lsSet('app_settings', settingsPayload()); // keep LS in sync
+      }
+    } catch {}
+  }
+}
+async function persistSettings() {
+  const payload = settingsPayload();
+  lsSet('app_settings', payload); // always save locally
+  if (db && isOnline) {
+    try {
+      const rows = [
+        { key: 'day_dose_table',   value: payload.dayDoseTable,   updated_at: new Date().toISOString() },
+        { key: 'night_dose_table', value: payload.nightDoseTable, updated_at: new Date().toISOString() },
+        { key: 'test_times',       value: payload.testTimes,      updated_at: new Date().toISOString() },
+        { key: 'inj_config',       value: payload.injConfig,      updated_at: new Date().toISOString() },
+      ];
+      const { error } = await db.from('app_settings').upsert(rows, { onConflict: 'key' });
+      if (error) queueOp({ type: 'settings', data: payload });
+    } catch { queueOp({ type: 'settings', data: payload }); }
+  } else {
+    queueOp({ type: 'settings', data: payload });
+  }
 }
 
 /* ═══════════════════════════════════════
@@ -825,10 +877,11 @@ function checkPin() {
   }
 }
 
-function saveAllSettings() {
-  persistSettings();
+async function saveAllSettings() {
   const btn = document.getElementById('save-settings-btn'), orig = btn.textContent;
-  btn.textContent = '✓ נשמר!'; btn.style.background = 'var(--green)';
+  btn.textContent = '⏳ שומר...'; btn.disabled = true;
+  await persistSettings();
+  btn.textContent = '✓ נשמר!'; btn.style.background = 'var(--green)'; btn.disabled = false;
   setTimeout(() => { btn.textContent = orig; btn.style.background = ''; }, 2200);
   if (document.getElementById('tab-guide').classList.contains('active')) renderGuide();
 }
@@ -959,7 +1012,7 @@ async function handleConfirm(key) {
    INIT
    ═══════════════════════════════════════ */
 async function init() {
-  loadSettings(); initDB();
+  initDB(); await loadSettings();
   document.getElementById('date-display').textContent = fmtDate(todayDate);
 
   document.querySelectorAll('.nav-btn').forEach(b => b.addEventListener('click', () => switchTab(b.dataset.tab)));
