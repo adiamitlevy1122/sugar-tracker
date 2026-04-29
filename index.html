@@ -467,6 +467,9 @@ async function loadSettings() {
         };
         applySettingsObj(remote);
         lsSet('app_settings', settingsPayload()); // keep LS in sync
+      } else if (!error) {
+        // Table is empty — push current settings up now
+        await persistSettings();
       }
     } catch {}
   }
