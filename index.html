@@ -1,0 +1,984 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="מעקב סוכר">
+  <meta name="theme-color" content="#007AFF">
+  <title>מעקב סוכר</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+    :root {
+      --blue: #007AFF;
+      --green: #34C759;
+      --orange: #FF9500;
+      --red: #FF3B30;
+      --bg: #F2F2F7;
+      --card: #FFFFFF;
+      --text: #000000;
+      --text2: #6C6C70;
+      --sep: #C6C6C8;
+      --safe-top: env(safe-area-inset-top, 0px);
+      --safe-bottom: env(safe-area-inset-bottom, 0px);
+    }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      font-family: -apple-system, 'Helvetica Neue', Arial, sans-serif;
+      color: var(--text);
+      overflow: hidden;
+    }
+
+    #app {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      max-width: 430px;
+      margin: 0 auto;
+    }
+
+    /* ── Header ── */
+    #header {
+      background: var(--card);
+      padding: calc(var(--safe-top) + 14px) 16px 12px;
+      border-bottom: 1px solid var(--sep);
+    }
+
+    #header-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 3px;
+    }
+
+    #app-title {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--blue);
+    }
+
+    #sync-indicator {
+      font-size: 12px;
+      color: var(--text2);
+    }
+
+    #date-display {
+      font-size: 13px;
+      color: var(--text2);
+    }
+
+    /* ── Content ── */
+    #content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    /* ── Bottom nav ── */
+    #bottom-nav {
+      background: var(--card);
+      border-top: 1px solid var(--sep);
+      display: flex;
+      padding-bottom: var(--safe-bottom);
+    }
+
+    .nav-btn {
+      flex: 1;
+      padding: 10px 0 8px;
+      background: none;
+      border: none;
+      font-size: 11px;
+      color: var(--text2);
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 3px;
+      font-family: inherit;
+      font-weight: 500;
+    }
+
+    .nav-btn.active { color: var(--blue); }
+    .nav-icon { font-size: 22px; }
+
+    /* ── Tab content ── */
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    /* ── Progress bar ── */
+    .day-progress {
+      background: var(--card);
+      border-radius: 12px;
+      padding: 14px 16px;
+      margin-bottom: 10px;
+    }
+
+    .progress-label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 13px;
+      margin-bottom: 8px;
+      color: var(--text2);
+    }
+
+    .progress-count { font-weight: 700; color: var(--blue); }
+
+    .progress-track {
+      background: var(--sep);
+      border-radius: 4px;
+      height: 6px;
+    }
+
+    .progress-fill {
+      background: var(--blue);
+      border-radius: 4px;
+      height: 6px;
+      transition: width 0.4s ease;
+    }
+
+    /* ── Timeline items ── */
+    .tl-item {
+      background: var(--card);
+      border-radius: 12px;
+      margin-bottom: 8px;
+      padding: 14px 16px;
+      border-right: 4px solid var(--sep);
+    }
+
+    .tl-item.pending { border-right-color: var(--blue); }
+    .tl-item.done    { border-right-color: var(--green); }
+    .tl-item.inj-pending { background: #EEF5FF; border-right-color: var(--blue); }
+    .tl-item.inj-done    { background: #EEFFF4; border-right-color: var(--green); }
+    .tl-item.inj-none    { background: #EEFFF4; border-right-color: var(--green); }
+
+    .tl-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+    .tl-left { flex: 1; min-width: 0; }
+
+    .tl-label {
+      font-size: 15px;
+      font-weight: 600;
+      margin-bottom: 2px;
+      line-height: 1.3;
+    }
+
+    .tl-sub { font-size: 12px; color: var(--text2); margin-top: 2px; }
+
+    .tl-value {
+      font-size: 24px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .tl-unit { font-size: 13px; font-weight: 400; color: var(--text2); }
+
+    .dose-line {
+      font-size: 17px;
+      font-weight: 700;
+      margin-top: 6px;
+    }
+
+    /* Sugar level colors */
+    .c-normal  { color: var(--green); }
+    .c-mid     { color: var(--orange); }
+    .c-high    { color: #FF6600; }
+    .c-danger  { color: var(--red); }
+
+    /* ── Buttons ── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 9px 18px;
+      border-radius: 10px;
+      border: none;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: inherit;
+      white-space: nowrap;
+    }
+
+    .btn-primary { background: var(--blue); color: white; }
+    .btn-success { background: var(--green); color: white; }
+    .btn-sm { padding: 7px 14px; font-size: 14px; }
+
+    .btn-primary:active { background: #0066DD; }
+    .btn-success:active { background: #2AAA4A; }
+
+    /* ── Modal ── */
+    #modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.45);
+      z-index: 200;
+      align-items: flex-end;
+      justify-content: center;
+    }
+
+    #modal-overlay.visible { display: flex; }
+
+    #modal {
+      background: var(--card);
+      border-radius: 20px 20px 0 0;
+      padding: 20px 20px calc(20px + var(--safe-bottom));
+      width: 100%;
+      max-width: 430px;
+      animation: slideUp 0.25s ease;
+    }
+
+    @keyframes slideUp {
+      from { transform: translateY(100%); }
+      to   { transform: translateY(0); }
+    }
+
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 18px;
+    }
+
+    .modal-title { font-size: 17px; font-weight: 700; }
+
+    .modal-close {
+      background: #E5E5EA;
+      border: none;
+      border-radius: 50%;
+      width: 30px;
+      height: 30px;
+      font-size: 16px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text2);
+    }
+
+    .input-label {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text2);
+      margin-bottom: 8px;
+      display: block;
+    }
+
+    #sugar-input {
+      width: 100%;
+      padding: 14px;
+      border-radius: 12px;
+      border: 2px solid var(--sep);
+      font-size: 32px;
+      font-weight: 700;
+      text-align: center;
+      font-family: inherit;
+      direction: ltr;
+      color: var(--text);
+      margin-bottom: 12px;
+    }
+
+    #sugar-input:focus { outline: none; border-color: var(--blue); }
+    #sugar-input.error { border-color: var(--red); }
+
+    #dose-preview {
+      border-radius: 12px;
+      padding: 12px 14px;
+      margin-bottom: 14px;
+      background: #EEF5FF;
+      display: none;
+    }
+
+    #dose-preview-title { font-size: 12px; font-weight: 600; color: var(--text2); margin-bottom: 6px; }
+    .preview-row { font-size: 16px; font-weight: 700; margin-bottom: 2px; }
+
+    #confirm-btn {
+      width: 100%;
+      padding: 14px;
+      border-radius: 12px;
+      background: var(--blue);
+      color: white;
+      border: none;
+      font-size: 17px;
+      font-weight: 700;
+      cursor: pointer;
+      font-family: inherit;
+    }
+
+    #confirm-btn:active { background: #0066DD; }
+
+    /* ── History ── */
+    .section-title {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text2);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      padding: 4px 4px 6px;
+      margin-top: 4px;
+    }
+
+    .card { background: var(--card); border-radius: 12px; margin-bottom: 10px; overflow: hidden; }
+
+    .hist-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--sep);
+    }
+
+    .hist-row:last-child { border-bottom: none; }
+    .hist-label { font-size: 14px; }
+    .hist-val { font-size: 14px; font-weight: 700; }
+
+    .hist-total {
+      background: #F8F8FF;
+      padding: 10px 14px;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    /* ── Guide ── */
+    .guide-table { width: 100%; border-collapse: collapse; }
+    .guide-table th {
+      background: var(--bg);
+      padding: 8px 14px;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text2);
+      text-align: right;
+      border-bottom: 1px solid var(--sep);
+    }
+    .guide-table td {
+      padding: 11px 14px;
+      font-size: 14px;
+      border-bottom: 1px solid var(--sep);
+    }
+    .guide-table tr:last-child td { border-bottom: none; }
+
+    /* ── Empty state ── */
+    .empty {
+      text-align: center;
+      padding: 50px 20px;
+      color: var(--text2);
+    }
+    .empty-icon { font-size: 44px; margin-bottom: 12px; }
+    .empty-text { font-size: 15px; }
+
+    /* ── Done banner ── */
+    .done-banner {
+      background: linear-gradient(135deg, #34C759, #30B350);
+      color: white;
+      border-radius: 12px;
+      padding: 14px 16px;
+      margin-bottom: 10px;
+      text-align: center;
+      font-size: 16px;
+      font-weight: 700;
+    }
+  </style>
+</head>
+<body>
+<div id="app">
+
+  <div id="header">
+    <div id="header-top">
+      <div id="app-title">💉 מעקב סוכר</div>
+      <div id="sync-indicator">🟢 מסונכרן</div>
+    </div>
+    <div id="date-display"></div>
+  </div>
+
+  <div id="content">
+    <div id="tab-today" class="tab-content active">
+      <div id="progress-wrap"></div>
+      <div id="timeline"></div>
+    </div>
+
+    <div id="tab-history" class="tab-content">
+      <div id="history-wrap"></div>
+    </div>
+
+    <div id="tab-guide" class="tab-content">
+      <div id="guide-wrap"></div>
+    </div>
+  </div>
+
+  <nav id="bottom-nav">
+    <button class="nav-btn active" data-tab="today">
+      <span class="nav-icon">📋</span>היום
+    </button>
+    <button class="nav-btn" data-tab="history">
+      <span class="nav-icon">📊</span>היסטוריה
+    </button>
+    <button class="nav-btn" data-tab="guide">
+      <span class="nav-icon">📖</span>מדריך
+    </button>
+  </nav>
+
+</div>
+
+<!-- Modal -->
+<div id="modal-overlay">
+  <div id="modal">
+    <div class="modal-header">
+      <div class="modal-title" id="modal-title">הזן תוצאה</div>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <label class="input-label">רמת סוכר (mg/dL)</label>
+    <input type="number" id="sugar-input" min="40" max="600" placeholder="120" inputmode="numeric">
+    <div id="dose-preview">
+      <div id="dose-preview-title">המלצת מינון:</div>
+      <div id="dose-preview-rows"></div>
+    </div>
+    <button id="confirm-btn" onclick="confirmReading()">אישור ✓</button>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+/* =========================================================
+   CONFIG
+   ========================================================= */
+const SUPABASE_URL = 'https://xdqdcuudylzvtlzpugbj.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_PQF9-XtaXGkTxNdXcOUeSg_mB7tH2q8';
+
+const TEST_TIMES = [
+  { code: 'a', label: 'בוקר – על קיבה ריקה',       short: 'צום בוקר',    trigInj: 'breakfast' },
+  { code: 'b', label: 'שעתיים אחרי ארוחת בוקר',    short: 'אחרי בוקר',   trigInj: null },
+  { code: 'c', label: '15 דקות לפני צהריים',        short: 'לפני צהריים', trigInj: 'lunch' },
+  { code: 'd', label: 'שעתיים אחרי צהריים',         short: 'אחרי צהריים', trigInj: null },
+  { code: 'e', label: '15 דקות לפני ערב',           short: 'לפני ערב',    trigInj: 'dinner' },
+  { code: 'f', label: 'שעתיים אחרי ערב',            short: 'אחרי ערב',    trigInj: null },
+];
+
+const INJ_CFG = {
+  breakfast: { label: 'הזרקה לפני ארוחת בוקר', basedOn: 'a' },
+  lunch:     { label: 'הזרקה לפני צהריים',       basedOn: 'c' },
+  dinner:    { label: 'הזרקה לפני ערב',           basedOn: 'e' },
+  sleep:     { label: 'הזרקה לפני השינה',         basedOn: 'a' },
+};
+
+// Order of injection keys after their triggering test in the timeline
+const TIMELINE_ORDER = ['a', 'breakfast', 'b', 'c', 'lunch', 'd', 'e', 'dinner', 'f', 'sleep'];
+
+const DOSE_TABLE = [
+  { min: 0,   max: 119,      dose: 0, label: 'ללא הזרקה' },
+  { min: 120, max: 180,      dose: 4, label: '4 יחידות' },
+  { min: 181, max: 250,      dose: 6, label: '6 יחידות' },
+  { min: 251, max: Infinity, dose: 8, label: '8 יחידות' },
+];
+
+/* =========================================================
+   STATE
+   ========================================================= */
+let db = null;
+let isOnline = navigator.onLine;
+let todayDate = localDate();
+let todayReadings   = {}; // { timeCode: { id, sugar_level, created_at, ... } }
+let todayInjections = {}; // { injKey:   { id, dose_units, based_on_sugar, administered, administered_at, ... } }
+let activeModal = null;   // timeCode currently in modal
+
+/* =========================================================
+   HELPERS
+   ========================================================= */
+function localDate() {
+  const d = new Date();
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+}
+
+function pad(n) { return String(n).padStart(2, '0'); }
+
+function getDose(sugar) {
+  return DOSE_TABLE.find(r => sugar >= r.min && sugar <= r.max) ?? DOSE_TABLE[3];
+}
+
+function sugarColor(v) {
+  if (v < 120) return 'c-normal';
+  if (v <= 180) return 'c-mid';
+  if (v <= 250) return 'c-high';
+  return 'c-danger';
+}
+
+function fmtDate(str) {
+  const d = new Date(str + 'T12:00:00');
+  const days   = ['ראשון','שני','שלישי','רביעי','חמישי','שישי','שבת'];
+  const months = ['ינואר','פברואר','מרץ','אפריל','מאי','יוני','יולי','אוגוסט','ספטמבר','אוקטובר','נובמבר','דצמבר'];
+  return `יום ${days[d.getDay()]}, ${d.getDate()} ב${months[d.getMonth()]} ${d.getFullYear()}`;
+}
+
+function fmtTime(ts) {
+  if (!ts) return '';
+  return new Date(ts).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
+}
+
+function uuid() { return crypto.randomUUID(); }
+
+/* =========================================================
+   LOCAL STORAGE
+   ========================================================= */
+function lsGet(k)    { try { return JSON.parse(localStorage.getItem(k) ?? 'null'); } catch { return null; } }
+function lsSet(k, v) { localStorage.setItem(k, JSON.stringify(v)); }
+
+function localReadings(date)       { return lsGet(`r_${date}`) ?? {}; }
+function saveLocalReadings(d, v)   { lsSet(`r_${d}`, v); }
+function localInjections(date)     { return lsGet(`i_${date}`) ?? {}; }
+function saveLocalInjections(d, v) { lsSet(`i_${d}`, v); }
+
+function queueOp(op) {
+  const q = lsGet('sync_q') ?? [];
+  q.push({ ...op, ts: Date.now() });
+  lsSet('sync_q', q);
+}
+
+async function flushQueue() {
+  if (!db || !isOnline) return;
+  const q = lsGet('sync_q') ?? [];
+  if (!q.length) return;
+  const failed = [];
+  for (const op of q) {
+    try {
+      if (op.type === 'reading')        await db.from('sugar_readings').upsert(op.data, { onConflict: 'id' });
+      else if (op.type === 'injection') await db.from('injections').upsert(op.data, { onConflict: 'id' });
+      else if (op.type === 'confirm')   await db.from('injections').update({ administered: true, administered_at: op.at }).eq('id', op.id);
+    } catch { failed.push(op); }
+  }
+  lsSet('sync_q', failed);
+  renderSyncStatus();
+}
+
+/* =========================================================
+   SUPABASE
+   ========================================================= */
+function initDB() {
+  try {
+    const { createClient } = supabase;
+    db = createClient(SUPABASE_URL, SUPABASE_KEY);
+  } catch(e) {
+    console.warn('Supabase init failed', e);
+  }
+}
+
+async function remoteUpsert(table, data) {
+  if (db && isOnline) {
+    try { await db.from(table).upsert(data, { onConflict: 'id' }); return; } catch {}
+  }
+  queueOp({ type: table === 'sugar_readings' ? 'reading' : 'injection', data });
+}
+
+async function loadToday() {
+  todayReadings   = localReadings(todayDate);
+  todayInjections = localInjections(todayDate);
+
+  if (db && isOnline) {
+    try {
+      await flushQueue();
+      const [{ data: rs }, { data: injs }] = await Promise.all([
+        db.from('sugar_readings').select('*').eq('date', todayDate),
+        db.from('injections').select('*').eq('date', todayDate),
+      ]);
+      if (rs)   { rs.forEach(r => { todayReadings[r.time_code] = r; }); saveLocalReadings(todayDate, todayReadings); }
+      if (injs) { injs.forEach(i => { todayInjections[i.injection_key] = i; }); saveLocalInjections(todayDate, todayInjections); }
+    } catch(e) { console.warn('Remote load failed', e); }
+  }
+}
+
+async function loadHistory(days = 30) {
+  const result = {};
+  const from = new Date(); from.setDate(from.getDate() - days);
+  const fromStr = `${from.getFullYear()}-${pad(from.getMonth()+1)}-${pad(from.getDate())}`;
+
+  if (db && isOnline) {
+    try {
+      const [{ data: rs }, { data: injs }] = await Promise.all([
+        db.from('sugar_readings').select('*').gte('date', fromStr).order('date', { ascending: false }).order('time_code'),
+        db.from('injections').select('*').gte('date', fromStr).order('date', { ascending: false }),
+      ]);
+      if (rs)   rs.forEach(r => { (result[r.date] ??= { r:{}, i:{} }).r[r.time_code] = r; });
+      if (injs) injs.forEach(i => { (result[i.date] ??= { r:{}, i:{} }).i[i.injection_key] = i; });
+      return result;
+    } catch {}
+  }
+
+  // Fallback: local storage last 7 days
+  for (let n = 1; n <= 7; n++) {
+    const d = new Date(); d.setDate(d.getDate() - n);
+    const ds = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+    const r = localReadings(ds), i = localInjections(ds);
+    if (Object.keys(r).length || Object.keys(i).length) result[ds] = { r, i };
+  }
+  return result;
+}
+
+/* =========================================================
+   DOMAIN ACTIONS
+   ========================================================= */
+async function saveReading(code, sugar) {
+  const data = { id: uuid(), date: todayDate, time_code: code, sugar_level: sugar, created_at: new Date().toISOString() };
+  todayReadings[code] = data;
+  saveLocalReadings(todayDate, todayReadings);
+  await remoteUpsert('sugar_readings', data);
+
+  // Create injection(s) triggered by this reading
+  const tt = TEST_TIMES.find(t => t.code === code);
+  if (tt?.trigInj) await saveInjection(tt.trigInj, sugar);
+  if (code === 'a') await saveInjection('sleep', sugar);
+}
+
+async function saveInjection(key, basedOnSugar) {
+  if (todayInjections[key]) return; // already exists
+  const dose = getDose(basedOnSugar);
+  const data = {
+    id: uuid(), date: todayDate, injection_key: key,
+    dose_units: dose.dose, based_on_sugar: basedOnSugar,
+    administered: false, administered_at: null,
+    created_at: new Date().toISOString(),
+  };
+  todayInjections[key] = data;
+  saveLocalInjections(todayDate, todayInjections);
+  await remoteUpsert('injections', data);
+}
+
+async function confirmInjection(key) {
+  const inj = todayInjections[key];
+  if (!inj) return;
+  const at = new Date().toISOString();
+  inj.administered    = true;
+  inj.administered_at = at;
+  saveLocalInjections(todayDate, todayInjections);
+
+  if (db && isOnline) {
+    try { await db.from('injections').update({ administered: true, administered_at: at }).eq('id', inj.id); return; } catch {}
+  }
+  queueOp({ type: 'confirm', id: inj.id, at });
+}
+
+/* =========================================================
+   RENDER – TODAY
+   ========================================================= */
+function renderToday() {
+  const doneCount = Object.keys(todayReadings).length;
+  const total = TEST_TIMES.length;
+
+  // Progress
+  document.getElementById('progress-wrap').innerHTML = `
+    <div class="day-progress">
+      <div class="progress-label">
+        <span>התקדמות היום</span>
+        <span class="progress-count">${doneCount}/${total} בדיקות</span>
+      </div>
+      <div class="progress-track">
+        <div class="progress-fill" style="width:${Math.round(doneCount/total*100)}%"></div>
+      </div>
+    </div>
+  `;
+
+  let html = '';
+
+  // Done banner
+  if (doneCount === total) {
+    html += `<div class="done-banner">✓ כל הבדיקות של היום הושלמו!</div>`;
+  }
+
+  for (const key of TIMELINE_ORDER) {
+    const tt = TEST_TIMES.find(t => t.code === key);
+    if (tt) {
+      html += renderTest(tt);
+    } else {
+      // It's an injection key — only show if its triggering reading exists
+      const cfg = INJ_CFG[key];
+      const basedOnCode = cfg.basedOn;
+      if (todayReadings[basedOnCode]) {
+        html += renderInj(key);
+      }
+    }
+  }
+
+  document.getElementById('timeline').innerHTML = html;
+}
+
+function renderTest(tt) {
+  const r = todayReadings[tt.code];
+  if (r) {
+    const cls = sugarColor(r.sugar_level);
+    return `
+      <div class="tl-item done">
+        <div class="tl-row">
+          <div class="tl-left">
+            <div class="tl-label">${tt.label}</div>
+            <div class="tl-sub">${fmtTime(r.created_at)}</div>
+          </div>
+          <div class="tl-value ${cls}">${r.sugar_level}<span class="tl-unit"> mg/dL</span></div>
+        </div>
+      </div>`;
+  }
+  return `
+    <div class="tl-item pending">
+      <div class="tl-row">
+        <div class="tl-label">${tt.label}</div>
+        <button class="btn btn-primary btn-sm" onclick="openModal('${tt.code}')">הזן תוצאה</button>
+      </div>
+    </div>`;
+}
+
+function renderInj(key) {
+  const cfg = INJ_CFG[key];
+  const inj = todayInjections[key];
+  if (!inj) return '';
+
+  if (inj.dose_units === 0) {
+    return `
+      <div class="tl-item inj-none">
+        <div class="tl-label">${cfg.label}</div>
+        <div class="dose-line c-normal">✓ ללא הזרקה</div>
+        <div class="tl-sub">סוכר: ${inj.based_on_sugar} mg/dL</div>
+      </div>`;
+  }
+
+  if (inj.administered) {
+    return `
+      <div class="tl-item inj-done">
+        <div class="tl-label">${cfg.label}</div>
+        <div class="dose-line c-normal">✓ ${inj.dose_units} יחידות הוזרקו</div>
+        <div class="tl-sub">${fmtTime(inj.administered_at)}</div>
+      </div>`;
+  }
+
+  return `
+    <div class="tl-item inj-pending">
+      <div class="tl-row">
+        <div class="tl-left">
+          <div class="tl-label">${cfg.label}</div>
+          <div class="dose-line" style="color:var(--blue)">💉 ${inj.dose_units} יחידות</div>
+          <div class="tl-sub">בסיס: ${inj.based_on_sugar} mg/dL</div>
+        </div>
+        <button class="btn btn-success btn-sm" onclick="handleConfirm('${key}')">אישור הזרקה</button>
+      </div>
+    </div>`;
+}
+
+/* =========================================================
+   RENDER – HISTORY
+   ========================================================= */
+async function renderHistory() {
+  const wrap = document.getElementById('history-wrap');
+  wrap.innerHTML = '<div class="empty"><div class="empty-icon">⏳</div><div class="empty-text">טוען...</div></div>';
+
+  const hist = await loadHistory();
+  const dates = Object.keys(hist).filter(d => d !== todayDate).sort().reverse();
+
+  if (!dates.length) {
+    wrap.innerHTML = '<div class="empty"><div class="empty-icon">📋</div><div class="empty-text">אין היסטוריה עדיין</div></div>';
+    return;
+  }
+
+  let html = '';
+  for (const date of dates) {
+    const { r: readings, i: injections } = hist[date];
+    const entries = TEST_TIMES.filter(t => readings[t.code]);
+    if (!entries.length) continue;
+
+    html += `<div class="section-title">${fmtDate(date)}</div><div class="card">`;
+
+    for (const tt of entries) {
+      const reading = readings[tt.code];
+      const cls = sugarColor(reading.sugar_level);
+      html += `
+        <div class="hist-row">
+          <div class="hist-label">${tt.short}</div>
+          <div class="hist-val ${cls}">${reading.sugar_level} <span style="font-weight:400;color:var(--text2);font-size:12px;">mg/dL</span></div>
+        </div>`;
+    }
+
+    const totalDose = Object.values(injections).reduce((s, i) => s + (i.dose_units ?? 0), 0);
+    if (totalDose > 0) {
+      html += `
+        <div class="hist-total">
+          <span style="font-size:13px;color:var(--text2);">סה"כ אינסולין</span>
+          <span class="hist-val" style="color:var(--blue)">${totalDose} יחידות</span>
+        </div>`;
+    }
+
+    html += `</div>`;
+  }
+
+  wrap.innerHTML = html;
+}
+
+/* =========================================================
+   RENDER – GUIDE
+   ========================================================= */
+function renderGuide() {
+  document.getElementById('guide-wrap').innerHTML = `
+    <div class="section-title">טבלת מינוני אינסולין</div>
+    <div class="card">
+      <table class="guide-table">
+        <thead><tr><th>רמת סוכר (mg/dL)</th><th>מינון</th></tr></thead>
+        <tbody>
+          <tr><td>מתחת ל-120</td><td style="font-weight:700;color:var(--green)">ללא הזרקה</td></tr>
+          <tr><td>120 – 180</td><td style="font-weight:700;color:var(--orange)">4 יחידות</td></tr>
+          <tr><td>181 – 250</td><td style="font-weight:700;color:#FF6600">6 יחידות</td></tr>
+          <tr><td>מעל 250</td><td style="font-weight:700;color:var(--red)">8 יחידות</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="section-title" style="margin-top:8px;">זמני בדיקה והזרקות</div>
+    <div class="card">
+      <table class="guide-table">
+        <thead><tr><th>בדיקה</th><th>פועל</th></tr></thead>
+        <tbody>
+          <tr><td>בוקר – על קיבה ריקה</td><td style="font-size:12px;">💉 הזרקה לפני בוקר + לפני שינה</td></tr>
+          <tr><td>שעתיים אחרי ארוחת בוקר</td><td style="font-size:12px;color:var(--text2)">מעקב בלבד</td></tr>
+          <tr><td>15 דקות לפני צהריים</td><td style="font-size:12px;">💉 הזרקה לפני צהריים</td></tr>
+          <tr><td>שעתיים אחרי צהריים</td><td style="font-size:12px;color:var(--text2)">מעקב בלבד</td></tr>
+          <tr><td>15 דקות לפני ערב</td><td style="font-size:12px;">💉 הזרקה לפני ערב</td></tr>
+          <tr><td>שעתיים אחרי ערב</td><td style="font-size:12px;color:var(--text2)">מעקב בלבד</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="section-title" style="margin-top:8px;">הערה חשובה</div>
+    <div class="card" style="padding:14px 16px;">
+      <p style="font-size:14px;line-height:1.7;color:var(--text2);">
+        האפליקציה מציגה המלצות לפי הפרוטוקול שהוגדר.<br>
+        תמיד התייעץ עם הרופא המטפל לגבי שינויים במינון.
+      </p>
+    </div>
+  `;
+}
+
+/* =========================================================
+   MODAL
+   ========================================================= */
+function openModal(code) {
+  activeModal = code;
+  const tt = TEST_TIMES.find(t => t.code === code);
+  document.getElementById('modal-title').textContent = tt.label;
+  const inp = document.getElementById('sugar-input');
+  inp.value = '';
+  inp.classList.remove('error');
+  document.getElementById('dose-preview').style.display = 'none';
+  document.getElementById('modal-overlay').classList.add('visible');
+  setTimeout(() => inp.focus(), 250);
+}
+
+function closeModal() {
+  document.getElementById('modal-overlay').classList.remove('visible');
+  activeModal = null;
+}
+
+function updatePreview() {
+  const v = parseInt(document.getElementById('sugar-input').value);
+  const preview = document.getElementById('dose-preview');
+  if (!v || isNaN(v) || v < 40 || !activeModal) { preview.style.display = 'none'; return; }
+
+  const tt    = TEST_TIMES.find(t => t.code === activeModal);
+  const dose  = getDose(v);
+  const lines = [];
+
+  if (tt?.trigInj)        lines.push(`${INJ_CFG[tt.trigInj].label}: ${dose.label}`);
+  if (activeModal === 'a') lines.push(`${INJ_CFG.sleep.label}: ${dose.label}`);
+
+  if (!lines.length) { preview.style.display = 'none'; return; }
+
+  const color = dose.dose === 0 ? 'var(--green)' : dose.dose === 4 ? 'var(--orange)' : dose.dose === 6 ? '#FF6600' : 'var(--red)';
+  document.getElementById('dose-preview-rows').innerHTML =
+    lines.map(l => `<div class="preview-row" style="color:${color}">${l}</div>`).join('');
+  preview.style.display = 'block';
+}
+
+async function confirmReading() {
+  const v = parseInt(document.getElementById('sugar-input').value);
+  const inp = document.getElementById('sugar-input');
+  if (!v || isNaN(v) || v < 40 || v > 600) {
+    inp.classList.add('error');
+    setTimeout(() => inp.classList.remove('error'), 1200);
+    return;
+  }
+  const code = activeModal;
+  closeModal();
+  await saveReading(code, v);
+  renderToday();
+  renderSyncStatus();
+}
+
+async function handleConfirm(key) {
+  await confirmInjection(key);
+  renderToday();
+  renderSyncStatus();
+}
+
+/* =========================================================
+   SYNC STATUS
+   ========================================================= */
+function renderSyncStatus() {
+  const el = document.getElementById('sync-indicator');
+  const q  = lsGet('sync_q') ?? [];
+  if (!isOnline)    { el.textContent = '⚫ לא מחובר'; el.style.color = 'var(--text2)'; }
+  else if (q.length){ el.textContent = `🔄 מסנכרן`; el.style.color = 'var(--orange)'; }
+  else              { el.textContent = '🟢 מסונכרן'; el.style.color = 'var(--green)'; }
+}
+
+/* =========================================================
+   NAV & EVENTS
+   ========================================================= */
+function switchTab(tab) {
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById(`tab-${tab}`).classList.add('active');
+  document.querySelector(`.nav-btn[data-tab="${tab}"]`).classList.add('active');
+  if (tab === 'history') renderHistory();
+  if (tab === 'guide')   renderGuide();
+}
+
+/* =========================================================
+   INIT
+   ========================================================= */
+async function init() {
+  initDB();
+
+  document.getElementById('date-display').textContent = fmtDate(todayDate);
+
+  document.querySelectorAll('.nav-btn').forEach(b => b.addEventListener('click', () => switchTab(b.dataset.tab)));
+
+  document.getElementById('sugar-input').addEventListener('input', updatePreview);
+  document.getElementById('sugar-input').addEventListener('keydown', e => { if (e.key === 'Enter') confirmReading(); });
+  document.getElementById('modal-overlay').addEventListener('click', e => { if (e.target.id === 'modal-overlay') closeModal(); });
+
+  window.addEventListener('online',  () => { isOnline = true;  renderSyncStatus(); flushQueue(); });
+  window.addEventListener('offline', () => { isOnline = false; renderSyncStatus(); });
+
+  // Daily reset check
+  setInterval(() => {
+    const today = localDate();
+    if (today !== todayDate) {
+      todayDate = today;
+      todayReadings = {}; todayInjections = {};
+      document.getElementById('date-display').textContent = fmtDate(todayDate);
+      renderToday();
+    }
+  }, 60_000);
+
+  await loadToday();
+  renderToday();
+  renderSyncStatus();
+
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
+
+  if (isOnline) flushQueue();
+}
+
+init();
+</script>
+</body>
+</html>
