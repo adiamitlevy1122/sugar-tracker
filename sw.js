@@ -1,4 +1,4 @@
-const CACHE = 'sugar-tracker-v15';
+const CACHE = 'sugar-tracker-v16';
 const SHELL = ['./', './index.html', './manifest.json', './icon.svg'];
 
 self.addEventListener('install', e => {

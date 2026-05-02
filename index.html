@@ -1183,17 +1183,37 @@ function scheduleAlerts() {
   }
 }
 
+function isIOS() {
+  return /iphone|ipad|ipod/i.test(navigator.userAgent);
+}
+function isStandalone() {
+  return navigator.standalone === true || window.matchMedia('(display-mode: standalone)').matches;
+}
+function notifSupported() {
+  return 'Notification' in window;
+}
+
 function updateNotifStatus() {
   const el = document.getElementById('notif-status');
   if (!el) return;
-  if (!('Notification' in window))      el.textContent = 'התראות אינן נתמכות בדפדפן זה';
-  else if (Notification.permission === 'granted')  el.textContent = '✓ התראות מופעלות';
-  else if (Notification.permission === 'denied')   el.textContent = '✗ התראות חסומות – אפשר בהגדרות';
-  else                                              el.textContent = 'לחץ לאישור התראות';
+  el.style.lineHeight = '1.4';
+
+  if (isIOS() && !isStandalone()) {
+    el.innerHTML = '📱 יש לפתוח מהמסך הראשי<br><span style="font-size:11px;color:var(--text2);">הוסף לדף הבית ← פתח משם ← חזור לכאן</span>';
+    return;
+  }
+  if (!notifSupported()) {
+    el.textContent = 'התראות אינן נתמכות בדפדפן זה';
+    return;
+  }
+  if (Notification.permission === 'granted') el.textContent = '✓ התראות מופעלות';
+  else if (Notification.permission === 'denied') el.textContent = '✗ חסומות – אפשר בהגדרות Safari';
+  else el.textContent = 'לחץ לאישור התראות';
 }
 
 async function requestNotifPermission() {
-  if (!('Notification' in window)) return;
+  if (isIOS() && !isStandalone()) { updateNotifStatus(); return; }
+  if (!notifSupported()) return;
   await Notification.requestPermission();
   updateNotifStatus();
 }
