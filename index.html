@@ -216,11 +216,15 @@
         <div class="settings-card" id="night-dose-editor"></div>
         <button class="btn btn-primary btn-sm" style="margin-bottom:14px;" onclick="addDoseRow('night')">+ הוסף טווח לילה</button>
 
-        <div class="section-title">שעות ארוחות ותזכורות</div>
+        <div class="section-title">שעות ארוחות</div>
         <div class="settings-card" id="meal-times-editor"></div>
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;padding:0 2px;">
+
+        <div class="section-title">לוח זמנים להתראות</div>
+        <div class="settings-card" id="alert-sched-editor"></div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+          <button class="btn btn-primary btn-sm" onclick="addAlertRow()">+ הוסף התראה</button>
           <button class="btn btn-primary btn-sm" onclick="requestNotifPermission()">🔔 אפשר התראות</button>
-          <span id="notif-status" style="font-size:12px;color:var(--text2);"></span>
+          <span id="notif-status" style="font-size:12px;color:var(--text2);flex:1;"></span>
         </div>
 
         <div class="section-title">הגדרות הזרקות</div>
@@ -337,11 +341,22 @@ let MEAL_TIMES = {
   sleep:     '22:30',  // bedtime injection
 };
 
+let ALERT_SCHEDULE = [
+  { id:1, base:'wakeup',    offsetMin:10,  type:'test',      label:'בדיקת צום בוקר',        active:true },
+  { id:2, base:'breakfast', offsetMin:120, type:'test',      label:'בדיקה אחרי ארוחת בוקר', active:true },
+  { id:3, base:'lunch',     offsetMin:-10, type:'injection', label:'הזרקה לפני צהריים',      active:true },
+  { id:4, base:'lunch',     offsetMin:120, type:'test',      label:'בדיקה אחרי צהריים',      active:true },
+  { id:5, base:'dinner',    offsetMin:-10, type:'injection', label:'הזרקה לפני ערב',         active:true },
+  { id:6, base:'dinner',    offsetMin:120, type:'test',      label:'בדיקה אחרי ערב',         active:true },
+];
+let nextAlertId = 7;
+
 const DEF_TEST_TIMES       = JSON.parse(JSON.stringify(TEST_TIMES));
 const DEF_INJ_CFG          = JSON.parse(JSON.stringify(INJ_CFG));
 const DEF_DAY_DOSE_TABLE   = JSON.parse(JSON.stringify(DAY_DOSE_TABLE.map(r => ({ ...r, max: r.max === Infinity ? null : r.max }))));
 const DEF_NIGHT_DOSE_TABLE = JSON.parse(JSON.stringify(NIGHT_DOSE_TABLE.map(r => ({ ...r, max: r.max === Infinity ? null : r.max }))));
 const DEF_MEAL_TIMES       = JSON.parse(JSON.stringify(MEAL_TIMES));
+const DEF_ALERT_SCHEDULE   = JSON.parse(JSON.stringify(ALERT_SCHEDULE));
 
 function testBtnColor(code) {
   if (code === 'a' || code === 'b') return 'var(--blue)';
@@ -909,7 +924,7 @@ function renderMealTimesEditor() {
     </div>`).join('');
   updateNotifStatus();
 }
-function renderSettingsContent() { renderDoseEditor(); renderMealTimesEditor(); renderInjEditor(); renderTimesEditor(); }
+function renderSettingsContent() { renderDoseEditor(); renderMealTimesEditor(); renderAlertScheduleEditor(); renderInjEditor(); renderTimesEditor(); }
 
 
 /* ═══════════════════════════════════════
@@ -932,7 +947,8 @@ function checkPin() {
 async function saveAllSettings() {
   const btn = document.getElementById('save-settings-btn'), orig = btn.textContent;
   btn.textContent = '⏳ שומר...'; btn.disabled = true;
-  await persistSettings();
+  await Promise.all([persistSettings(), saveAlertSchedule()]);
+  scheduleAlerts(); // recalculate with new times/schedule
   btn.textContent = '✓ נשמר!'; btn.style.background = 'var(--green)'; btn.disabled = false;
   setTimeout(() => { btn.textContent = orig; btn.style.background = ''; }, 2200);
   if (document.getElementById('tab-guide').classList.contains('active')) renderGuide();
@@ -944,7 +960,9 @@ function resetSettings() {
   DAY_DOSE_TABLE   = DEF_DAY_DOSE_TABLE.map(toInf);
   NIGHT_DOSE_TABLE = DEF_NIGHT_DOSE_TABLE.map(toInf);
   TEST_TIMES  = JSON.parse(JSON.stringify(DEF_TEST_TIMES));
-  MEAL_TIMES  = JSON.parse(JSON.stringify(DEF_MEAL_TIMES));
+  MEAL_TIMES     = JSON.parse(JSON.stringify(DEF_MEAL_TIMES));
+  ALERT_SCHEDULE = JSON.parse(JSON.stringify(DEF_ALERT_SCHEDULE));
+  nextAlertId    = DEF_ALERT_SCHEDULE.length + 1;
   Object.keys(DEF_INJ_CFG).forEach(k => { INJ_CFG[k] = { ...DEF_INJ_CFG[k] }; });
   lsSet('app_settings', null); renderSettingsContent();
 }
@@ -1065,7 +1083,7 @@ async function handleConfirm(key) {
    INIT
    ═══════════════════════════════════════ */
 async function init() {
-  initDB(); await loadSettings();
+  initDB(); await Promise.all([loadSettings(), loadAlertSchedule()]);
   document.getElementById('date-display').textContent = fmtDate(todayDate);
 
   document.querySelectorAll('.nav-btn').forEach(b => b.addEventListener('click', () => switchTab(b.dataset.tab)));
@@ -1103,44 +1121,50 @@ async function init() {
 let alertTimeouts = [];
 
 function getAlertSchedule() {
-  const m = MEAL_TIMES;
-  return [
-    { hhmm: m.wakeup,                title: '🩸 בדיקת צום',              body: 'זמן לבדיקת סוכר בוקר על קיבה ריקה',           type: 'test' },
-    { hhmm: addMins(m.breakfast,-10), title: '💉 הזרקה לפני בוקר',       body: 'הזרקת אינסולין 10 דקות לפני ארוחת בוקר',       type: 'injection' },
-    { hhmm: addMins(m.breakfast,120), title: '🩸 בדיקה אחרי בוקר',       body: 'בדיקת סוכר שעתיים אחרי ארוחת בוקר',           type: 'test' },
-    { hhmm: addMins(m.lunch,-15),     title: '🩸💉 לפני צהריים',          body: 'בדיקה והזרקה 15 דקות לפני ארוחת צהריים',       type: 'both' },
-    { hhmm: addMins(m.lunch,120),     title: '🩸 בדיקה אחרי צהריים',     body: 'בדיקת סוכר שעתיים אחרי ארוחת צהריים',         type: 'test' },
-    { hhmm: addMins(m.dinner,-15),    title: '🩸💉 לפני ערב',             body: 'בדיקה והזרקה 15 דקות לפני ארוחת ערב',          type: 'both' },
-    { hhmm: addMins(m.dinner,120),    title: '🩸 בדיקה אחרי ערב',        body: 'בדיקת סוכר שעתיים אחרי ארוחת ערב',            type: 'test' },
-    { hhmm: m.sleep,                  title: '💉 הזרקה לפני שינה',       body: 'הזרקת אינסולין לפני השינה',                    type: 'injection' },
-  ];
+  const icon = { test:'🩸', injection:'💉', both:'🩸💉' };
+  return ALERT_SCHEDULE
+    .filter(a => a.active && MEAL_TIMES[a.base])
+    .map(a => {
+      const hhmm = addMins(MEAL_TIMES[a.base], a.offsetMin);
+      return { hhmm, title: `${icon[a.type]} ${a.label}`, body: a.label, type: a.type };
+    })
+    .sort((a, b) => hhmm2min(a.hhmm) - hhmm2min(b.hhmm));
 }
 
 function playSound(type) {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const beep = (freq, start, dur) => {
+    const t = ctx.currentTime;
+
+    // Sonar: sweeping high→low frequency ping (injection)
+    const sonar = (s) => {
       const osc = ctx.createOscillator(), gain = ctx.createGain();
       osc.connect(gain); gain.connect(ctx.destination);
-      osc.type = 'sine'; osc.frequency.value = freq;
-      gain.gain.setValueAtTime(0, start);
-      gain.gain.linearRampToValueAtTime(0.45, start + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.001, start + dur);
-      osc.start(start); osc.stop(start + dur + 0.05);
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(1100, s);
+      osc.frequency.exponentialRampToValueAtTime(180, s + 1.4);
+      gain.gain.setValueAtTime(0.55, s);
+      gain.gain.exponentialRampToValueAtTime(0.001, s + 1.4);
+      osc.start(s); osc.stop(s + 1.45);
     };
-    const t = ctx.currentTime;
-    if (type === 'injection' || type === 'both') {
-      // Injection: two low pulses at 370Hz
-      beep(370, t,       0.22);
-      beep(370, t + 0.35,0.22);
-    }
-    if (type === 'test' || type === 'both') {
-      // Test: three high pulses at 720Hz
-      const off = type === 'both' ? 0.8 : 0;
-      beep(720, t+off,       0.14);
-      beep(720, t+off+0.22,  0.14);
-      beep(720, t+off+0.44,  0.14);
-    }
+
+    // Quad: 4-note ascending arpeggio (A major: A4 C#5 E5 A5) — test
+    const quad = (s) => {
+      [440, 554, 659, 880].forEach((freq, i) => {
+        const osc = ctx.createOscillator(), gain = ctx.createGain();
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.type = 'triangle'; osc.frequency.value = freq;
+        const n = s + i * 0.18;
+        gain.gain.setValueAtTime(0, n);
+        gain.gain.linearRampToValueAtTime(0.45, n + 0.03);
+        gain.gain.exponentialRampToValueAtTime(0.001, n + 0.28);
+        osc.start(n); osc.stop(n + 0.32);
+      });
+    };
+
+    if (type === 'injection') sonar(t);
+    else if (type === 'test') quad(t);
+    else if (type === 'both') { sonar(t); quad(t + 1.6); }
   } catch {}
 }
 
@@ -1191,6 +1215,90 @@ function isStandalone() {
 }
 function notifSupported() {
   return 'Notification' in window;
+}
+
+/* ═══════════════════════════════════════
+   ALERT SCHEDULE – DB
+   ═══════════════════════════════════════ */
+async function loadAlertSchedule() {
+  const local = lsGet('alert_sched');
+  if (local?.length) {
+    ALERT_SCHEDULE = local;
+    nextAlertId = Math.max(...local.map(r => r.id)) + 1;
+  }
+  if (db && isOnline) {
+    try {
+      const { data, error } = await db.from('alert_schedule').select('*').order('sort_order');
+      if (!error && data?.length) {
+        ALERT_SCHEDULE = data.map(r => ({
+          id: r.id, base: r.base_event, offsetMin: r.offset_min,
+          type: r.alert_type, label: r.label, active: r.active,
+        }));
+        nextAlertId = Math.max(...ALERT_SCHEDULE.map(r => r.id)) + 1;
+        lsSet('alert_sched', ALERT_SCHEDULE);
+      } else if (!error) {
+        await saveAlertSchedule(); // populate empty table with defaults
+      }
+    } catch {}
+  }
+}
+
+async function saveAlertSchedule() {
+  lsSet('alert_sched', ALERT_SCHEDULE);
+  if (db && isOnline) {
+    try {
+      const now  = new Date().toISOString();
+      const rows = ALERT_SCHEDULE.map((r, i) => ({
+        id: r.id, base_event: r.base, offset_min: r.offsetMin,
+        alert_type: r.type, label: r.label, active: r.active,
+        sort_order: i, updated_at: now,
+      }));
+      await db.from('alert_schedule').upsert(rows, { onConflict: 'id' });
+      // Delete any rows removed by the user
+      const ids = ALERT_SCHEDULE.map(r => r.id);
+      if (ids.length) await db.from('alert_schedule').delete().not('id', 'in', `(${ids.join(',')})`);
+      else            await db.from('alert_schedule').delete().gte('id', 0);
+    } catch {}
+  }
+}
+
+/* ═══════════════════════════════════════
+   ALERT SCHEDULE – EDITOR
+   ═══════════════════════════════════════ */
+const ALERT_BASE_LABELS = { wakeup:'השכמה', breakfast:'ארוחת בוקר', lunch:'צהריים', dinner:'ערב', sleep:'שינה' };
+const ALERT_TYPE_LABELS = { test:'🩸 בדיקה', injection:'💉 הזרקה', both:'🩸💉 שניהם' };
+
+function renderAlertScheduleEditor() {
+  document.getElementById('alert-sched-editor').innerHTML = ALERT_SCHEDULE.map(r => `
+    <div class="settings-row" style="flex-wrap:wrap;gap:6px;padding:10px 16px;align-items:center;">
+      <select class="s-select" style="flex:1;min-width:95px;" onchange="updateAlertRow(${r.id},'base',this.value)">
+        ${Object.entries(ALERT_BASE_LABELS).map(([k,v])=>`<option value="${k}" ${r.base===k?'selected':''}>${v}</option>`).join('')}
+      </select>
+      <div style="display:flex;align-items:center;gap:3px;">
+        <input type="number" class="s-input" style="width:65px;" value="${r.offsetMin}"
+               onchange="updateAlertRow(${r.id},'offsetMin',+this.value)">
+        <span style="font-size:11px;color:var(--text2);">דק'</span>
+      </div>
+      <select class="s-select" style="flex:1;min-width:100px;" onchange="updateAlertRow(${r.id},'type',this.value)">
+        ${Object.entries(ALERT_TYPE_LABELS).map(([k,v])=>`<option value="${k}" ${r.type===k?'selected':''}>${v}</option>`).join('')}
+      </select>
+      <label class="toggle" dir="ltr">
+        <input type="checkbox" ${r.active?'checked':''} onchange="updateAlertRow(${r.id},'active',this.checked)">
+        <span class="toggle-track"></span><span class="toggle-thumb"></span>
+      </label>
+      <button class="btn-trash" onclick="deleteAlertRow(${r.id})">🗑</button>
+    </div>`).join('');
+}
+
+function updateAlertRow(id, field, val) {
+  const row = ALERT_SCHEDULE.find(r => r.id === id); if (row) row[field] = val;
+}
+function addAlertRow() {
+  ALERT_SCHEDULE.push({ id: nextAlertId++, base:'breakfast', offsetMin:0, type:'test', label:'התראה חדשה', active:true });
+  renderAlertScheduleEditor();
+}
+function deleteAlertRow(id) {
+  ALERT_SCHEDULE = ALERT_SCHEDULE.filter(r => r.id !== id); renderAlertScheduleEditor();
 }
 
 function updateNotifStatus() {
