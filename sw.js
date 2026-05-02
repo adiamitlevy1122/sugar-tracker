@@ -1,4 +1,4 @@
-const CACHE = 'sugar-tracker-v14';
+const CACHE = 'sugar-tracker-v15';
 const SHELL = ['./', './index.html', './manifest.json', './icon.svg'];
 
 self.addEventListener('install', e => {
@@ -31,5 +31,32 @@ self.addEventListener('fetch', e => {
       }
       return res;
     }))
+  );
+});
+
+// Show notification requested by the main thread
+self.addEventListener('message', e => {
+  if (e.data?.type !== 'show-notification') return;
+  const { title, body, tag, notifType } = e.data;
+  const vibrate = notifType === 'both' ? [200,100,200,100,200,100,200]
+                : notifType === 'injection' ? [200,100,200]
+                : [150,100,150,100,150];
+  e.waitUntil(
+    self.registration.showNotification(title, {
+      body, icon: './icon.svg', badge: './icon.svg',
+      tag, vibrate,
+      data: { url: self.location.origin + self.location.pathname.replace('sw.js','') },
+    })
+  );
+});
+
+// Open / focus the app when notification is tapped
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  e.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
+      if (list.length) return list[0].focus();
+      return clients.openWindow(e.notification.data?.url || './');
+    })
   );
 });

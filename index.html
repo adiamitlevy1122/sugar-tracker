@@ -216,6 +216,13 @@
         <div class="settings-card" id="night-dose-editor"></div>
         <button class="btn btn-primary btn-sm" style="margin-bottom:14px;" onclick="addDoseRow('night')">+ הוסף טווח לילה</button>
 
+        <div class="section-title">שעות ארוחות ותזכורות</div>
+        <div class="settings-card" id="meal-times-editor"></div>
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;padding:0 2px;">
+          <button class="btn btn-primary btn-sm" onclick="requestNotifPermission()">🔔 אפשר התראות</button>
+          <span id="notif-status" style="font-size:12px;color:var(--text2);"></span>
+        </div>
+
         <div class="section-title">הגדרות הזרקות</div>
         <div class="settings-card" id="inj-editor"></div>
 
@@ -229,6 +236,9 @@
       </div>
     </div>
   </div>
+
+  <!-- Alert toast -->
+  <div id="alert-toast" style="display:none;position:fixed;top:calc(var(--safe-top) + 80px);left:50%;transform:translateX(-50%);background:#1C1C1E;color:#fff;padding:14px 20px;border-radius:16px;font-size:15px;font-weight:600;z-index:400;text-align:center;max-width:320px;box-shadow:0 4px 24px rgba(0,0,0,0.4);pointer-events:none;"></div>
 
   <nav id="bottom-nav">
     <button class="nav-btn active" data-tab="today"><span class="nav-icon">📋</span>היום</button>
@@ -319,10 +329,19 @@ let NIGHT_DOSE_TABLE = [
   { min: 251, max: Infinity, dose: 10 },
 ];
 
+let MEAL_TIMES = {
+  wakeup:    '07:00',  // morning fasting test
+  breakfast: '07:30',  // injection -10min; test +2h
+  lunch:     '13:00',  // test & injection -15min; test +2h
+  dinner:    '19:00',  // test & injection -15min; test +2h
+  sleep:     '22:30',  // bedtime injection
+};
+
 const DEF_TEST_TIMES       = JSON.parse(JSON.stringify(TEST_TIMES));
 const DEF_INJ_CFG          = JSON.parse(JSON.stringify(INJ_CFG));
 const DEF_DAY_DOSE_TABLE   = JSON.parse(JSON.stringify(DAY_DOSE_TABLE.map(r => ({ ...r, max: r.max === Infinity ? null : r.max }))));
 const DEF_NIGHT_DOSE_TABLE = JSON.parse(JSON.stringify(NIGHT_DOSE_TABLE.map(r => ({ ...r, max: r.max === Infinity ? null : r.max }))));
+const DEF_MEAL_TIMES       = JSON.parse(JSON.stringify(MEAL_TIMES));
 
 function testBtnColor(code) {
   if (code === 'a' || code === 'b') return 'var(--blue)';
@@ -349,6 +368,9 @@ function localDate() {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jerusalem' });
 }
 function pad(n) { return String(n).padStart(2,'0'); }
+function hhmm2min(t) { const [h,m]=t.split(':').map(Number); return h*60+m; }
+function min2hhmm(n) { const t=((n%1440)+1440)%1440; return `${pad(Math.floor(t/60))}:${pad(t%60)}`; }
+function addMins(hhmm,n) { return min2hhmm(hhmm2min(hhmm)+n); }
 
 function getDose(sugar, isNight = false) {
   const table = isNight ? NIGHT_DOSE_TABLE : DAY_DOSE_TABLE;
@@ -419,6 +441,7 @@ async function flushQueue() {
           { key: 'night_dose_table', value: p.nightDoseTable, updated_at: now },
           { key: 'test_times',       value: p.testTimes,      updated_at: now },
           { key: 'inj_config',       value: p.injConfig,      updated_at: now },
+          { key: 'meal_times',       value: p.mealTimes,      updated_at: now },
         ];
         ({ error: err } = await db.from('app_settings').upsert(rows, { onConflict: 'key' }));
       }
@@ -437,6 +460,7 @@ function applySettingsObj(s) {
   if (s.dayDoseTable)   DAY_DOSE_TABLE   = s.dayDoseTable.map(toInf);
   if (s.nightDoseTable) NIGHT_DOSE_TABLE = s.nightDoseTable.map(toInf);
   if (s.testTimes)      TEST_TIMES = s.testTimes;
+  if (s.mealTimes)      MEAL_TIMES = { ...MEAL_TIMES, ...s.mealTimes };
   if (s.injConfig)      Object.keys(s.injConfig).forEach(k => {
     if (INJ_CFG[k]) { const { basedOn, active } = s.injConfig[k]; INJ_CFG[k] = { ...INJ_CFG[k], basedOn, active }; }
   });
@@ -448,6 +472,7 @@ function settingsPayload() {
     nightDoseTable: NIGHT_DOSE_TABLE.map(toNull),
     testTimes: TEST_TIMES,
     injConfig: INJ_CFG,
+    mealTimes: MEAL_TIMES,
   };
 }
 async function loadSettings() {
@@ -464,6 +489,7 @@ async function loadSettings() {
           nightDoseTable: byKey.night_dose_table,
           testTimes:      byKey.test_times,
           injConfig:      byKey.inj_config,
+          mealTimes:      byKey.meal_times,
         };
         applySettingsObj(remote);
         lsSet('app_settings', settingsPayload()); // keep LS in sync
@@ -479,11 +505,13 @@ async function persistSettings() {
   lsSet('app_settings', payload); // always save locally
   if (db && isOnline) {
     try {
+      const now = new Date().toISOString();
       const rows = [
-        { key: 'day_dose_table',   value: payload.dayDoseTable,   updated_at: new Date().toISOString() },
-        { key: 'night_dose_table', value: payload.nightDoseTable, updated_at: new Date().toISOString() },
-        { key: 'test_times',       value: payload.testTimes,      updated_at: new Date().toISOString() },
-        { key: 'inj_config',       value: payload.injConfig,      updated_at: new Date().toISOString() },
+        { key: 'day_dose_table',   value: payload.dayDoseTable,   updated_at: now },
+        { key: 'night_dose_table', value: payload.nightDoseTable, updated_at: now },
+        { key: 'test_times',       value: payload.testTimes,      updated_at: now },
+        { key: 'inj_config',       value: payload.injConfig,      updated_at: now },
+        { key: 'meal_times',       value: payload.mealTimes,      updated_at: now },
       ];
       const { error } = await db.from('app_settings').upsert(rows, { onConflict: 'key' });
       if (error) queueOp({ type: 'settings', data: payload });
@@ -860,7 +888,28 @@ function renderTimesEditor() {
     </div>`).join('');
 }
 
-function renderSettingsContent() { renderDoseEditor(); renderInjEditor(); renderTimesEditor(); }
+function renderMealTimesEditor() {
+  const labels = {
+    wakeup:    { he: 'השכמה', sub: 'בדיקת צום בוקר' },
+    breakfast: { he: 'ארוחת בוקר', sub: 'הזרקה −10 דק׳ / בדיקה +2 ש׳' },
+    lunch:     { he: 'ארוחת צהריים', sub: 'בדיקה+הזרקה −15 דק׳ / בדיקה +2 ש׳' },
+    dinner:    { he: 'ארוחת ערב', sub: 'בדיקה+הזרקה −15 דק׳ / בדיקה +2 ש׳' },
+    sleep:     { he: 'שעת שינה', sub: 'הזרקה לפני השינה' },
+  };
+  document.getElementById('meal-times-editor').innerHTML = Object.entries(MEAL_TIMES).map(([k,v]) => `
+    <div class="settings-row" style="align-items:flex-start;flex-direction:column;gap:4px;padding:12px 16px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;width:100%;">
+        <div>
+          <div style="font-size:15px;font-weight:600;">${labels[k].he}</div>
+          <div style="font-size:11px;color:var(--text2);margin-top:1px;">${labels[k].sub}</div>
+        </div>
+        <input type="time" class="s-input" style="width:110px;font-size:16px;padding:6px 10px;"
+               value="${v}" onchange="MEAL_TIMES['${k}']=this.value; scheduleAlerts();">
+      </div>
+    </div>`).join('');
+  updateNotifStatus();
+}
+function renderSettingsContent() { renderDoseEditor(); renderMealTimesEditor(); renderInjEditor(); renderTimesEditor(); }
 
 
 /* ═══════════════════════════════════════
@@ -894,7 +943,8 @@ function resetSettings() {
   const toInf = r => ({ ...r, max: r.max===null ? Infinity : r.max });
   DAY_DOSE_TABLE   = DEF_DAY_DOSE_TABLE.map(toInf);
   NIGHT_DOSE_TABLE = DEF_NIGHT_DOSE_TABLE.map(toInf);
-  TEST_TIMES = JSON.parse(JSON.stringify(DEF_TEST_TIMES));
+  TEST_TIMES  = JSON.parse(JSON.stringify(DEF_TEST_TIMES));
+  MEAL_TIMES  = JSON.parse(JSON.stringify(DEF_MEAL_TIMES));
   Object.keys(DEF_INJ_CFG).forEach(k => { INJ_CFG[k] = { ...DEF_INJ_CFG[k] }; });
   lsSet('app_settings', null); renderSettingsContent();
 }
@@ -1038,6 +1088,114 @@ async function init() {
   await loadToday(); await ensureInjections(); renderToday(); renderSyncStatus();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
   if (isOnline) flushQueue();
+
+  // Alert scheduler — recalculate at midnight and on day change
+  scheduleAlerts();
+  setInterval(() => {
+    const today = localDate();
+    if (today !== todayDate) { todayDate = today; scheduleAlerts(); }
+  }, 60_000);
+}
+
+/* ═══════════════════════════════════════
+   NOTIFICATIONS & ALERTS
+   ═══════════════════════════════════════ */
+let alertTimeouts = [];
+
+function getAlertSchedule() {
+  const m = MEAL_TIMES;
+  return [
+    { hhmm: m.wakeup,                title: '🩸 בדיקת צום',              body: 'זמן לבדיקת סוכר בוקר על קיבה ריקה',           type: 'test' },
+    { hhmm: addMins(m.breakfast,-10), title: '💉 הזרקה לפני בוקר',       body: 'הזרקת אינסולין 10 דקות לפני ארוחת בוקר',       type: 'injection' },
+    { hhmm: addMins(m.breakfast,120), title: '🩸 בדיקה אחרי בוקר',       body: 'בדיקת סוכר שעתיים אחרי ארוחת בוקר',           type: 'test' },
+    { hhmm: addMins(m.lunch,-15),     title: '🩸💉 לפני צהריים',          body: 'בדיקה והזרקה 15 דקות לפני ארוחת צהריים',       type: 'both' },
+    { hhmm: addMins(m.lunch,120),     title: '🩸 בדיקה אחרי צהריים',     body: 'בדיקת סוכר שעתיים אחרי ארוחת צהריים',         type: 'test' },
+    { hhmm: addMins(m.dinner,-15),    title: '🩸💉 לפני ערב',             body: 'בדיקה והזרקה 15 דקות לפני ארוחת ערב',          type: 'both' },
+    { hhmm: addMins(m.dinner,120),    title: '🩸 בדיקה אחרי ערב',        body: 'בדיקת סוכר שעתיים אחרי ארוחת ערב',            type: 'test' },
+    { hhmm: m.sleep,                  title: '💉 הזרקה לפני שינה',       body: 'הזרקת אינסולין לפני השינה',                    type: 'injection' },
+  ];
+}
+
+function playSound(type) {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const beep = (freq, start, dur) => {
+      const osc = ctx.createOscillator(), gain = ctx.createGain();
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.type = 'sine'; osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0, start);
+      gain.gain.linearRampToValueAtTime(0.45, start + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, start + dur);
+      osc.start(start); osc.stop(start + dur + 0.05);
+    };
+    const t = ctx.currentTime;
+    if (type === 'injection' || type === 'both') {
+      // Injection: two low pulses at 370Hz
+      beep(370, t,       0.22);
+      beep(370, t + 0.35,0.22);
+    }
+    if (type === 'test' || type === 'both') {
+      // Test: three high pulses at 720Hz
+      const off = type === 'both' ? 0.8 : 0;
+      beep(720, t+off,       0.14);
+      beep(720, t+off+0.22,  0.14);
+      beep(720, t+off+0.44,  0.14);
+    }
+  } catch {}
+}
+
+function showToast(title, body) {
+  const el = document.getElementById('alert-toast');
+  el.innerHTML = `<div>${title}</div><div style="font-size:12px;font-weight:400;margin-top:4px;opacity:0.8;">${body}</div>`;
+  el.style.display = 'block'; el.style.opacity = '1';
+  setTimeout(() => { el.style.opacity = '0'; setTimeout(() => el.style.display='none', 400); }, 5000);
+}
+
+function fireAlert(alert) {
+  playSound(alert.type);
+  showToast(alert.title, alert.body);
+  // Show system notification via service worker
+  if (Notification.permission === 'granted' && navigator.serviceWorker?.controller) {
+    navigator.serviceWorker.controller.postMessage({
+      type: 'show-notification', title: alert.title, body: alert.body,
+      tag: alert.hhmm, notifType: alert.type,
+    });
+  }
+}
+
+function scheduleAlerts() {
+  // Clear existing
+  alertTimeouts.forEach(clearTimeout); alertTimeouts = [];
+  const schedule  = getAlertSchedule();
+  const now       = new Date();
+  const nowMin    = now.getHours()*60 + now.getMinutes();
+  const todayStr  = localDate();
+  for (const alert of schedule) {
+    const alertMin = hhmm2min(alert.hhmm);
+    const diffMs   = (alertMin - nowMin) * 60_000 - now.getSeconds()*1000;
+    const firedKey = `alert_fired_${todayStr}_${alert.hhmm}`;
+    if (diffMs > 0 && !lsGet(firedKey)) {
+      alertTimeouts.push(setTimeout(() => {
+        lsSet(firedKey, true);
+        fireAlert(alert);
+      }, diffMs));
+    }
+  }
+}
+
+function updateNotifStatus() {
+  const el = document.getElementById('notif-status');
+  if (!el) return;
+  if (!('Notification' in window))      el.textContent = 'התראות אינן נתמכות בדפדפן זה';
+  else if (Notification.permission === 'granted')  el.textContent = '✓ התראות מופעלות';
+  else if (Notification.permission === 'denied')   el.textContent = '✗ התראות חסומות – אפשר בהגדרות';
+  else                                              el.textContent = 'לחץ לאישור התראות';
+}
+
+async function requestNotifPermission() {
+  if (!('Notification' in window)) return;
+  await Notification.requestPermission();
+  updateNotifStatus();
 }
 
 /* ═══════════════════════════════════════
